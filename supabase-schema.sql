@@ -1,4 +1,4 @@
- ========================================================
+-- ========================================================
 -- KRISHAN POS - SUPABASE 100% FREE CLOUD DATABASE SCHEMA
 -- ========================================================
 -- Run this SQL in Supabase Dashboard -> SQL Editor -> Run
@@ -159,18 +159,52 @@ ALTER TABLE purchase_bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE photo_frames ENABLE ROW LEVEL SECURITY;
 
+-- Idempotent RLS Policies (Safe to run multiple times)
+DROP POLICY IF EXISTS "Allow full access for users" ON users;
 CREATE POLICY "Allow full access for users" ON users FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for items" ON items;
 CREATE POLICY "Allow full access for items" ON items FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for sales" ON sales;
 CREATE POLICY "Allow full access for sales" ON sales FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for repairs" ON repairs;
 CREATE POLICY "Allow full access for repairs" ON repairs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for expenses" ON expenses;
 CREATE POLICY "Allow full access for expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for creditors" ON creditors;
 CREATE POLICY "Allow full access for creditors" ON creditors FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for bank_transactions" ON bank_transactions;
 CREATE POLICY "Allow full access for bank_transactions" ON bank_transactions FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for suppliers" ON suppliers;
 CREATE POLICY "Allow full access for suppliers" ON suppliers FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for purchase_bills" ON purchase_bills;
 CREATE POLICY "Allow full access for purchase_bills" ON purchase_bills FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for settings" ON settings;
 CREATE POLICY "Allow full access for settings" ON settings FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow full access for photo_frames" ON photo_frames;
 CREATE POLICY "Allow full access for photo_frames" ON photo_frames FOR ALL USING (true) WITH CHECK (true);
 
--- Enable Realtime for all tables so multiple devices sync automatically
-ALTER PUBLICATION supabase_realtime ADD TABLE items, sales, repairs, expenses, creditors, bank_transactions, suppliers, purchase_bills, settings, photo_frames;
-
+-- Enable Realtime safely (checks if publication already includes table)
+DO $$
+DECLARE
+    tbl TEXT;
+    tables TEXT[] := ARRAY['items', 'sales', 'repairs', 'expenses', 'creditors', 'bank_transactions', 'suppliers', 'purchase_bills', 'settings', 'photo_frames'];
+BEGIN
+    FOREACH tbl IN ARRAY tables LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_publication_tables 
+            WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = tbl
+        ) THEN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I;', tbl);
+        END IF;
+    END LOOP;
+END $$;

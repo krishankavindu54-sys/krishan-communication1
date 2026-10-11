@@ -11,12 +11,22 @@
 // =============================================================================
 
 window.SUPABASE_CONFIG = {
-    // Enter your project URL here or leave blank to set via UI
-    url: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_url') : '') || '',
+    // Supabase Cloud Project URL
+    url: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_url') : '') || 'https://vzpwrtabdgdrmfpqsiqf.supabase.co',
 
-    // Enter your anon public key here or leave blank to set via UI
-    anonKey: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_key') : '') || ''
+    // Supabase anon / public API key
+    anonKey: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_key') : '') || 'sb_publishable_Pa_-9c4Qs2XLBwXLZ1OLVQ_TRjDeCOb'
 };
+
+// Auto-seed to localStorage so UI displays active project immediately
+if (typeof localStorage !== 'undefined') {
+    if (!localStorage.getItem('krishan_pos_supabase_url')) {
+        localStorage.setItem('krishan_pos_supabase_url', window.SUPABASE_CONFIG.url);
+    }
+    if (!localStorage.getItem('krishan_pos_supabase_key')) {
+        localStorage.setItem('krishan_pos_supabase_key', window.SUPABASE_CONFIG.anonKey);
+    }
+}
 
 // Initialize global Supabase client
 (function initSupabase() {
@@ -30,7 +40,6 @@ window.SUPABASE_CONFIG = {
                 realtime: { params: { eventsPerSecond: 10 } }
             });
             window.supabaseClient = client;
-            // Also expose as window.sb for convenience
             window.sb = client;
             console.log('⚡ [Supabase] Connected to:', url);
         } else {
