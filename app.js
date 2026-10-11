@@ -163,30 +163,20 @@ const app = {
                     app.realtime.setStatus('connected');
 
                     const channel = sb.channel('public:pos-live-sync')
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Items updated, syncing...', payload);
+                        .on('broadcast', { event: 'pos_mutation' }, (payload) => {
+                            console.log('⚡ [Supabase Broadcast] Mutation received from another device:', payload);
                             app.syncWithBackend(true);
                         })
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Sales updated, syncing...', payload);
-                            app.syncWithBackend(true);
-                        })
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'repairs' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Repairs updated, syncing...', payload);
-                            app.syncWithBackend(true);
-                        })
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Expenses updated, syncing...', payload);
-                            app.syncWithBackend(true);
-                        })
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'creditors' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Creditors updated, syncing...', payload);
-                            app.syncWithBackend(true);
-                        })
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photo_frames' }, (payload) => {
-                            console.log('⚡ [Supabase Realtime] Frames updated, syncing...', payload);
-                            app.syncWithBackend(true);
-                        })
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'repairs' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'creditors' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'photo_frames' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_transactions' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_bills' }, () => app.syncWithBackend(true))
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, () => app.syncWithBackend(true))
                         .subscribe((status) => {
                             console.log('⚡ [Supabase Realtime] Channel status:', status);
                             if (status === 'SUBSCRIBED') {
@@ -197,6 +187,22 @@ const app = {
                     app.realtime.supabaseChannel = channel;
                     app.realtime.flushOfflineQueue();
                     app.syncWithBackend(false);
+
+                    // Multi-device sync heartbeat (syncs every 10s as safety fallback)
+                    if (!app.realtime.syncHeartbeat) {
+                        app.realtime.syncHeartbeat = setInterval(() => {
+                            app.syncWithBackend(false);
+                        }, 10000);
+                    }
+
+                    // Auto-sync when user returns to app/tab
+                    if (!window._posSyncFocusAttached) {
+                        window._posSyncFocusAttached = true;
+                        window.addEventListener('focus', () => {
+                            app.syncWithBackend(true);
+                        });
+                    }
+
                     return;
                 } catch (err) {
                     console.warn('Supabase realtime init error:', err);
@@ -360,25 +366,45 @@ const app = {
         },
 
         flushOfflineQueue: async () => {
-            if (app.realtime.pendingQueue.length === 0) return;
-            console.log(`📤 Flushing ${app.realtime.pendingQueue.length} offline operations to server...`);
+            if (!app.realtime.pendingQueue || app.realtime.pendingQueue.length === 0) return;
+            console.log(`📤 Flushing ${app.realtime.pendingQueue.length} offline operations to Supabase...`);
             try {
-                const res = await fetch(app.getApiUrl('/api/sync/batch'), {
-                    method: 'POST',
-                    headers: app.getAuthHeaders(),
-                    credentials: 'include',
-                    body: JSON.stringify({ operations: app.realtime.pendingQueue })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.success) {
-                        console.log('✅ Offline queue synced successfully:', data.processed);
-                        app.realtime.pendingQueue = [];
-                        localStorage.removeItem('pos_offline_queue');
-                        app.realtime.updateStatusUI();
-                        await app.syncWithBackend(false);
+                const queue = [...app.realtime.pendingQueue];
+                for (const op of queue) {
+                    try {
+                        const { type, targetId, payload } = op;
+                        if (type === 'create_item') await app.apiCall('/api/items', 'POST', payload);
+                        else if (type === 'update_item') await app.apiCall(`/api/items/${targetId}`, 'PUT', payload);
+                        else if (type === 'delete_item') await app.apiCall(`/api/items/${targetId}`, 'DELETE');
+                        else if (type === 'adjust_stock') await app.apiCall(`/api/items/${targetId}/adjust-stock`, 'POST', payload);
+                        else if (type === 'create_sale') await app.apiCall('/api/sales', 'POST', payload);
+                        else if (type === 'create_repair') await app.apiCall('/api/repairs', 'POST', payload);
+                        else if (type === 'update_repair') await app.apiCall(`/api/repairs/${targetId}`, 'PUT', payload);
+                        else if (type === 'delete_repair') await app.apiCall(`/api/repairs/${targetId}`, 'DELETE');
+                        else if (type === 'create_expense') await app.apiCall('/api/expenses', 'POST', payload);
+                        else if (type === 'delete_expense') await app.apiCall(`/api/expenses/${targetId}`, 'DELETE');
+                        else if (type === 'create_creditor') await app.apiCall('/api/creditors', 'POST', payload);
+                        else if (type === 'update_creditor') await app.apiCall(`/api/creditors/${targetId}`, 'PUT', payload);
+                        else if (type === 'delete_creditor') await app.apiCall(`/api/creditors/${targetId}`, 'DELETE');
+                        else if (type === 'create_frame') await app.apiCall('/api/frames', 'POST', payload);
+                        else if (type === 'update_frame') await app.apiCall(`/api/frames/${targetId}`, 'PUT', payload);
+                        else if (type === 'delete_frame') await app.apiCall(`/api/frames/${targetId}`, 'DELETE');
+                        else if (type === 'create_bill') await app.apiCall('/api/purchase-bills', 'POST', payload);
+                        else if (type === 'update_bill') await app.apiCall(`/api/purchase-bills/${targetId}`, 'PUT', payload);
+                        else if (type === 'delete_bill') await app.apiCall(`/api/purchase-bills/${targetId}`, 'DELETE');
+                        else if (type === 'create_supplier') await app.apiCall('/api/suppliers', 'POST', payload);
+                        else if (type === 'delete_supplier') await app.apiCall(`/api/suppliers/${targetId}`, 'DELETE');
+                        else if (type === 'create_bank_tx') await app.apiCall('/api/bank-transactions', 'POST', payload);
+                        else if (type === 'delete_bank_tx') await app.apiCall(`/api/bank-transactions/${targetId}`, 'DELETE');
+                        else if (type === 'set_setting') await app.apiCall('/api/settings', 'POST', payload);
+                    } catch (itemErr) {
+                        console.warn('Error flushing queue item:', itemErr);
                     }
                 }
+                app.realtime.pendingQueue = [];
+                localStorage.removeItem('pos_offline_queue');
+                app.realtime.updateStatusUI();
+                await app.syncWithBackend(false);
             } catch (err) {
                 console.warn('Could not flush offline queue:', err);
             }
@@ -623,9 +649,24 @@ const app = {
         }
     },
 
+    // Broadcast mutation to other devices via Realtime channel
+    broadcastMutation: (tableName, method, record) => {
+        if (app.realtime && app.realtime.supabaseChannel && typeof app.realtime.supabaseChannel.send === 'function') {
+            try {
+                app.realtime.supabaseChannel.send({
+                    type: 'broadcast',
+                    event: 'pos_mutation',
+                    payload: { table: tableName, action: method, record: record ? { id: record.id } : null }
+                });
+            } catch (e) {
+                // non-blocking
+            }
+        }
+    },
+
     // Unified socket-aware API Caller with direct Supabase & offline queue fallback
     apiCall: async (pathOrTable, method = 'GET', data = null, offlineAction = null, offlineId = null) => {
-        const sb = window.supabaseClient || window.sb || (typeof supabase !== 'undefined' ? supabase : null);
+        const sb = window.supabaseClient || window.sb || (typeof supabase !== 'undefined' && supabase.from ? supabase : null);
 
         // 1. Direct Supabase Cloud Execution
         if (sb && typeof sb.from === 'function') {
@@ -634,7 +675,9 @@ const app = {
                 rawTable = rawTable.replace(/-/g, '_');
                 const tableMap = {
                     'bank_transactions': 'bank_transactions',
+                    'bank-transactions': 'bank_transactions',
                     'purchase_bills': 'purchase_bills',
+                    'purchase-bills': 'purchase_bills',
                     'items': 'items',
                     'sales': 'sales',
                     'repairs': 'repairs',
@@ -642,9 +685,26 @@ const app = {
                     'creditors': 'creditors',
                     'suppliers': 'suppliers',
                     'settings': 'settings',
-                    'users': 'users'
+                    'users': 'users',
+                    'frames': 'photo_frames',
+                    'photo_frames': 'photo_frames'
                 };
                 const tableName = tableMap[rawTable] || rawTable;
+
+                // Allowed Supabase schema columns per table (prevents PGRST204 schema mismatch errors)
+                const schemaFields = {
+                    items: ['id', 'name', 'barcode', 'category', 'type', 'price', 'cost', 'stock', 'min_stock'],
+                    sales: ['id', 'date', 'total', 'discount', 'payment_method', 'cash_received', 'change_amount', 'items_json', 'customer_name', 'customer_phone', 'user_id', 'is_utility'],
+                    repairs: ['id', 'customer_name', 'phone_model', 'issue', 'estimated_cost', 'advance_payment', 'status', 'contact', 'created_at'],
+                    expenses: ['id', 'date', 'category', 'amount', 'description'],
+                    creditors: ['id', 'name', 'phone', 'amount', 'type', 'last_updated'],
+                    bank_transactions: ['id', 'date', 'type', 'amount', 'note'],
+                    suppliers: ['id', 'name', 'company', 'phone', 'email', 'address'],
+                    purchase_bills: ['id', 'supplier_id', 'supplier_name', 'bill_number', 'date', 'total_amount', 'status', 'items_json'],
+                    settings: ['key', 'value'],
+                    photo_frames: ['id', 'customer_name', 'size', 'frame_type', 'status', 'advance_payment', 'total_price', 'due_date', 'phone', 'notes', 'created_at'],
+                    users: ['id', 'username', 'password_hash', 'name', 'role']
+                };
 
                 // Format data fields for Supabase schema
                 const toSb = (tbl, item) => {
@@ -653,6 +713,8 @@ const app = {
                     if (tbl === 'sales') {
                         if (rec.paymentMethod !== undefined) { rec.payment_method = rec.paymentMethod; delete rec.paymentMethod; }
                         if (rec.cashReceived !== undefined) { rec.cash_received = rec.cashReceived; delete rec.cashReceived; }
+                        if (rec.change !== undefined) { rec.change_amount = rec.change; delete rec.change; }
+                        if (rec.changeAmount !== undefined) { rec.change_amount = rec.changeAmount; delete rec.changeAmount; }
                         if (rec.items !== undefined) { rec.items_json = rec.items; delete rec.items; }
                         if (rec.customerName !== undefined) { rec.customer_name = rec.customerName; delete rec.customerName; }
                         if (rec.customerPhone !== undefined) { rec.customer_phone = rec.customerPhone; delete rec.customerPhone; }
@@ -666,6 +728,7 @@ const app = {
                         if (rec.createdAt !== undefined) { rec.created_at = rec.createdAt; delete rec.createdAt; }
                     } else if (tbl === 'creditors') {
                         if (rec.lastUpdated !== undefined) { rec.last_updated = rec.lastUpdated; delete rec.lastUpdated; }
+                        if (rec.contact !== undefined) { rec.phone = rec.contact; delete rec.contact; }
                     } else if (tbl === 'purchase_bills') {
                         if (rec.supplierId !== undefined) { rec.supplier_id = rec.supplierId; delete rec.supplierId; }
                         if (rec.supplierName !== undefined) { rec.supplier_name = rec.supplierName; delete rec.supplierName; }
@@ -674,51 +737,89 @@ const app = {
                         if (rec.items !== undefined) { rec.items_json = rec.items; delete rec.items; }
                     } else if (tbl === 'items') {
                         if (rec.minStock !== undefined) { rec.min_stock = rec.minStock; delete rec.minStock; }
+                    } else if (tbl === 'photo_frames') {
+                        if (rec.customerName !== undefined) { rec.customer_name = rec.customerName; delete rec.customerName; }
+                        if (rec.frameType !== undefined) { rec.frame_type = rec.frameType; delete rec.frameType; }
+                        if (rec.advancePayment !== undefined) { rec.advance_payment = rec.advancePayment; delete rec.advancePayment; }
+                        if (rec.totalPrice !== undefined) { rec.total_price = rec.totalPrice; delete rec.totalPrice; }
+                        if (rec.dueDate !== undefined) { rec.due_date = rec.dueDate; delete rec.dueDate; }
+                        if (rec.createdAt !== undefined) { rec.created_at = rec.createdAt; delete rec.createdAt; }
+                    }
+
+                    const allowed = schemaFields[tbl];
+                    if (allowed) {
+                        const filtered = {};
+                        for (const k of Object.keys(rec)) {
+                            if (allowed.includes(k) && rec[k] !== undefined) {
+                                filtered[k] = rec[k];
+                            }
+                        }
+                        return filtered;
                     }
                     return rec;
                 };
 
                 if (method === 'GET') {
-                    const { data: resData, error } = await supabase.from(tableName).select('*');
+                    const { data: resData, error } = await sb.from(tableName).select('*');
                     if (error) throw error;
                     return resData;
                 } else if (method === 'POST') {
                     if (tableName === 'settings' && data && data.key) {
-                        const { data: resData, error } = await supabase.from('settings').upsert([data]).select();
+                        const { data: resData, error } = await sb.from('settings').upsert([data]).select();
                         if (error) throw error;
+                        app.broadcastMutation('settings', 'POST', resData ? resData[0] : data);
                         return resData ? resData[0] : null;
                     }
                     if (pathOrTable.includes('/adjust-stock')) {
                         const idMatch = pathOrTable.match(/items\/(\d+)\/adjust-stock/);
                         if (idMatch && data && data.delta !== undefined) {
                             const itemId = Number(idMatch[1]);
-                            const { data: curItem } = await supabase.from('items').select('stock').eq('id', itemId).single();
+                            const { data: curItem } = await sb.from('items').select('stock').eq('id', itemId).single();
                             if (curItem) {
-                                const newStock = (curItem.stock || 0) + Number(data.delta);
-                                await supabase.from('items').update({ stock: newStock }).eq('id', itemId);
+                                const newStock = Math.max(0, (curItem.stock || 0) + Number(data.delta));
+                                await sb.from('items').update({ stock: newStock }).eq('id', itemId);
+                                app.broadcastMutation('items', 'PUT', { id: itemId, stock: newStock });
                             }
                             return { success: true };
                         }
                     }
                     const payload = toSb(tableName, data);
-                    const { data: resData, error } = await supabase.from(tableName).upsert([payload]).select();
+                    // Omit local auto-increment ID on insert so Postgres generates unique sequence ID
+                    const localId = payload.id;
+                    delete payload.id;
+
+                    const { data: resData, error } = await sb.from(tableName).insert([payload]).select();
                     if (error) throw error;
-                    return resData ? resData[0] : null;
+                    const savedRecord = resData ? resData[0] : null;
+
+                    // Sync server ID back into Dexie store
+                    if (savedRecord && localId && db[tableName]) {
+                        if (localId !== savedRecord.id) {
+                            await db[tableName].delete(localId).catch(() => {});
+                        }
+                        await db[tableName].put({ ...data, id: savedRecord.id }).catch(() => {});
+                    }
+
+                    app.broadcastMutation(tableName, 'POST', savedRecord);
+                    return savedRecord;
                 } else if (method === 'PUT') {
                     const id = (data && data.id) || pathOrTable.split('/').pop();
                     const updateData = toSb(tableName, data);
                     delete updateData.id;
-                    const { data: resData, error } = await supabase.from(tableName).update(updateData).eq('id', id).select();
+                    const { data: resData, error } = await sb.from(tableName).update(updateData).eq('id', id).select();
                     if (error) throw error;
-                    return resData ? resData[0] : null;
+                    const updatedRecord = resData ? resData[0] : null;
+                    app.broadcastMutation(tableName, 'PUT', updatedRecord || { id });
+                    return updatedRecord;
                 } else if (method === 'DELETE') {
                     const id = pathOrTable.split('/').pop();
-                    const { error } = await supabase.from(tableName).delete().eq('id', id);
+                    const { error } = await sb.from(tableName).delete().eq('id', id);
                     if (error) throw error;
+                    app.broadcastMutation(tableName, 'DELETE', { id });
                     return { success: true };
                 }
             } catch (sbErr) {
-                console.warn(`Supabase fallback call failed for ${pathOrTable}:`, sbErr.message);
+                console.warn(`Supabase direct call error for ${pathOrTable}:`, sbErr?.message || sbErr);
             }
         }
 
@@ -2601,9 +2702,11 @@ const app = {
 
         let users = [];
         try {
-            const res = await fetch(app.getApiUrl('/api/users'), { credentials: 'include' });
-            const data = await res.json();
-            if (data.success) users = data.users;
+            const sb = window.supabaseClient || window.sb;
+            if (sb && typeof sb.from === 'function') {
+                const { data: sbUsers, error } = await sb.from('users').select('id, username, name, role, created_at');
+                if (!error && sbUsers && sbUsers.length > 0) users = sbUsers;
+            }
         } catch (e) {
             console.error('Error loading users:', e);
         }
@@ -2738,30 +2841,29 @@ const app = {
 
         if (formValues) {
             try {
-                if (isEdit) {
-                    const res = await fetch(app.getApiUrl(`/api/users/${id}`), {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(formValues)
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.message || 'Update failed');
-                    Swal.fire({ icon: 'success', title: 'User Updated', timer: 1500, showConfirmButton: false });
-                } else {
-                    const res = await fetch(app.getApiUrl('/api/users'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify(formValues)
-                    });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.message || 'Creation failed');
-                    Swal.fire({ icon: 'success', title: 'User Created', timer: 1500, showConfirmButton: false });
+                const sb = window.supabaseClient || window.sb;
+                if (sb && typeof sb.from === 'function') {
+                    if (isEdit) {
+                        const updateObj = { name: formValues.name, role: formValues.role };
+                        if (formValues.password) updateObj.password_hash = formValues.password;
+                        const { error } = await sb.from('users').update(updateObj).eq('id', id);
+                        if (error) throw error;
+                        Swal.fire({ icon: 'success', title: 'User Updated', timer: 1500, showConfirmButton: false });
+                    } else {
+                        const insertObj = {
+                            username: formValues.username,
+                            name: formValues.name,
+                            role: formValues.role,
+                            password_hash: formValues.password
+                        };
+                        const { error } = await sb.from('users').insert([insertObj]);
+                        if (error) throw error;
+                        Swal.fire({ icon: 'success', title: 'User Created', timer: 1500, showConfirmButton: false });
+                    }
                 }
                 app.renderUsers();
             } catch (err) {
-                Swal.fire('Error', err.message, 'error');
+                Swal.fire('Error', err.message || 'Operation failed', 'error');
             }
         }
     },
@@ -2779,16 +2881,15 @@ const app = {
 
         if (result.isConfirmed) {
             try {
-                const res = await fetch(app.getApiUrl(`/api/users/${id}`), {
-                    method: 'DELETE',
-                    credentials: 'include'
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.message || 'Delete failed');
+                const sb = window.supabaseClient || window.sb;
+                if (sb && typeof sb.from === 'function') {
+                    const { error } = await sb.from('users').delete().eq('id', id);
+                    if (error) throw error;
+                }
                 Swal.fire({ icon: 'success', title: 'User Deleted', timer: 1500, showConfirmButton: false });
                 app.renderUsers();
             } catch (err) {
-                Swal.fire('Error', err.message, 'error');
+                Swal.fire('Error', err.message || 'Delete failed', 'error');
             }
         }
     },
@@ -3302,17 +3403,8 @@ const app = {
                 allRepairs = await db.repairs.toArray();
                 if (!allRepairs || allRepairs.length === 0) {
                     try {
-                        const resRep = await fetch(app.getApiUrl('/api/repairs'), {
-                            headers: app.getAuthHeaders(),
-                            credentials: 'include'
-                        });
-                        if (resRep.ok) {
-                            const srv = await resRep.json();
-                            if (Array.isArray(srv) && srv.length > 0) {
-                                await db.repairs.bulkPut(srv);
-                                allRepairs = await db.repairs.toArray();
-                            }
-                        }
+                        await app.syncWithBackend(false);
+                        allRepairs = await db.repairs.toArray();
                     } catch (e) {}
                 }
             } catch (e) {
@@ -4333,12 +4425,14 @@ const app = {
                 app.apiCall(`/api/creditors/${creditor.id}`, 'PUT', updatedCred, 'update_creditor', creditor.id);
             }
 
-            // 3. Update Inventory Stock
+            // 3. Update Inventory Stock (Local Dexie + Cloud Supabase)
             for (const item of app.state.cart) {
                 if (item.type === 'product' && item.id && !String(item.id).startsWith('custom-')) {
                     const dbItem = await db.items.get(item.id);
                     if (dbItem) {
-                        await db.items.update(item.id, { stock: Math.max(0, dbItem.stock - item.qty) });
+                        const newStock = Math.max(0, dbItem.stock - item.qty);
+                        await db.items.update(item.id, { stock: newStock });
+                        app.apiCall(`/api/items/${item.id}`, 'PUT', { stock: newStock }, 'update_item', item.id);
                     }
                 }
             }
@@ -4951,17 +5045,8 @@ const app = {
         let repairs = await db.repairs.toArray();
         if (!repairs || repairs.length === 0) {
             try {
-                const resRep = await fetch(app.getApiUrl('/api/repairs'), {
-                    headers: app.getAuthHeaders(),
-                    credentials: 'include'
-                });
-                if (resRep.ok) {
-                    const srv = await resRep.json();
-                    if (Array.isArray(srv) && srv.length > 0) {
-                        await db.repairs.bulkPut(srv);
-                        repairs = await db.repairs.toArray();
-                    }
-                }
+                await app.syncWithBackend(false);
+                repairs = await db.repairs.toArray();
             } catch (e) {}
         }
         if (!repairs) repairs = [];
@@ -5504,17 +5589,8 @@ const app = {
         try {
             frames = await db.photoFrames.toArray();
             if (!frames || frames.length === 0) {
-                const res = await fetch(app.getApiUrl('/api/frames'), {
-                    headers: app.getAuthHeaders(),
-                    credentials: 'include'
-                });
-                if (res.ok) {
-                    const srv = await res.json();
-                    if (Array.isArray(srv) && srv.length > 0) {
-                        await db.photoFrames.bulkPut(srv);
-                        frames = await db.photoFrames.toArray();
-                    }
-                }
+                await app.syncWithBackend(false);
+                frames = await db.photoFrames.toArray();
             }
         } catch (e) {
             console.warn('Error fetching frames:', e);
