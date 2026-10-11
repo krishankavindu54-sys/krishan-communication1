@@ -1,5 +1,5 @@
 // Krishan POS Service Worker - Fast Cache & Offline Engine
-const CACHE_NAME = 'krishan-pos-v2.1.0';
+const CACHE_NAME = 'krishan-pos-v2.1.1';
 
 const STATIC_ASSETS = [
     '/',
