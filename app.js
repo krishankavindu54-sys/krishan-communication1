@@ -998,6 +998,20 @@ const app = {
         }
     },
 
+    clearOfflineQueue: () => {
+        app.realtime.pendingQueue = [];
+        localStorage.removeItem('pos_offline_queue');
+        app.realtime.updateStatusUI();
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'info',
+            title: 'Offline queue cleared',
+            timer: 1500,
+            showConfirmButton: false
+        });
+    },
+
     showSyncStatusModal: () => {
         const sb = window.supabaseClient || window.sb;
         const isSbConfigured = Boolean(sb && typeof sb.from === 'function');
@@ -1035,6 +1049,12 @@ const app = {
                             <span class="font-mono text-[11px] truncate max-w-[200px]" title="${sbUrl}">${sbUrl}</span>
                         </div>
                     </div>
+
+                    ${queueCount > 0 ? `
+                        <button type="button" onclick="app.clearOfflineQueue()" class="w-full py-2 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 font-bold text-xs hover:bg-amber-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                            <i class="fa-solid fa-trash-can"></i> Clear Offline Queue (${queueCount} items)
+                        </button>
+                    ` : ''}
 
                     <div class="flex gap-2">
                         <button type="button" onclick="app.configureSupabaseModal()" class="w-full py-2.5 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-bold text-xs hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
