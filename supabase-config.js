@@ -1,31 +1,19 @@
 // =============================================================================
 // KRISHAN POS - SUPABASE CLOUD DATABASE CONFIGURATION
 // =============================================================================
-// You can enter your Supabase Project URL and Anon/Public Key here,
-// or configure them directly inside the app UI by clicking the cloud sync badge.
-//
-// How to get your keys:
-// 1. Go to https://supabase.com and create/open your project.
-// 2. Go to Project Settings -> API.
-// 3. Copy "Project URL" and "anon public" API key.
-// =============================================================================
 
 window.SUPABASE_CONFIG = {
     // Supabase Cloud Project URL
-    url: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_url') : '') || 'https://vzpwrtabdgdrmfpqsiqf.supabase.co',
+    url: 'https://vzpwrtabdgdrmfpqsiqf.supabase.co',
 
     // Supabase anon / public API key
-    anonKey: (typeof localStorage !== 'undefined' ? localStorage.getItem('krishan_pos_supabase_key') : '') || 'sb_publishable_Pa_-9c4Qs2XLBwXLZ1OLVQ_TRjDeCOb'
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6cHdydGFiZGdkcm1mcHFzaXFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3MDE4MzMsImV4cCI6MjEwNzI3NzgzM30.zv4PS68W29FlkgK9pQEkmdXhUL53gUHsYU_4C5j4i1M'
 };
 
-// Auto-seed to localStorage so UI displays active project immediately
+// Always ensure localStorage has the active project credentials
 if (typeof localStorage !== 'undefined') {
-    if (!localStorage.getItem('krishan_pos_supabase_url')) {
-        localStorage.setItem('krishan_pos_supabase_url', window.SUPABASE_CONFIG.url);
-    }
-    if (!localStorage.getItem('krishan_pos_supabase_key')) {
-        localStorage.setItem('krishan_pos_supabase_key', window.SUPABASE_CONFIG.anonKey);
-    }
+    localStorage.setItem('krishan_pos_supabase_url', window.SUPABASE_CONFIG.url);
+    localStorage.setItem('krishan_pos_supabase_key', window.SUPABASE_CONFIG.anonKey);
 }
 
 // Initialize global Supabase client
